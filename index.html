@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Intercept - 2D Shooter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --color-primary: #00e0ff; /* Neon Blue */
+            --color-secondary: #ff0077; /* Neon Pink */
+            --color-background: #0d1a26; /* Dark Blue/Black */
+            --color-canvas: #1c2e40; /* Slightly lighter background */
+            --color-green: #39ff14; /* Neon Green */
+        }
+        body {
+            font-family: 'Orbitron', sans-serif;
+            background-color: var(--color-background);
+            color: var(--color-primary);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+            padding: 20px;
+        }
+        #game-container {
+            width: 100%;
+            max-width: 800px;
+            /* Added max-height to ensure the game fits vertically on small screens */
+            max-height: 90vh; 
+            border: 4px solid var(--color-primary);
+            box-shadow: 0 0 20px var(--color-primary);
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            background-color: var(--color-background);
+        }
+        #game-canvas {
+            background-color: var(--color-canvas);
+            display: block;
+            width: 100%;
+            touch-action: none; /* Prevent mobile gestures from interfering */
+        }
+        .ui-panel {
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            background-color: var(--color-canvas);
+            border-top: 1px solid rgba(0, 224, 255, 0.3);
+            font-size: 1.1rem;
+        }
+        .stat span {
+            font-weight: 700;
+            color: var(--color-green);
+        }
+        /* Button styling for a futuristic look */
+        .game-button {
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 8px;
+            font-weight: 700;
+            transition: all 0.2s;
+            background-color: var(--color-primary);
+            color: var(--color-background);
+            border: 2px solid var(--color-primary);
+            box-shadow: 0 0 10px var(--color-primary);
+        }
+        .game-button:hover {
+            background-color: var(--color-background);
+            color: var(--color-primary);
+            box-shadow: 0 0 15px var(--color-primary);
+        }
+        .message-box {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.85);
+            z-index: 1000;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Orbitron', sans-serif;
+        }
+        .message-content {
+            background-color: var(--color-canvas);
+            padding: 40px;
+            border-radius: 12px;
+            max-width: 450px;
+            text-align: center;
+            border: 3px solid var(--color-secondary);
+            box-shadow: 0 0 25px var(--color-secondary);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Game Container -->
+    <div id="game-container">
+        <div class="ui-panel">
+            <div class="stat">Level: <span id="level-display">1</span></div>
+            <div class="stat">Score: <span id="score-display">0</span></div>
+            <div class="stat">Health: <span id="health-display" class="text-green-500">100</span></div>
+        </div>
+        <canvas id="game-canvas"></canvas>
+    </div>
+
+    <!-- Custom Message Box Modal -->
+    <div id="message-modal" class="message-box">
+        <div class="message-content">
+            <h3 id="modal-title" class="text-3xl font-bold mb-4 text-white"></h3>
+            <p id="modal-message" class="text-lg text-gray-300 mb-6"></p>
+            <button id="modal-button" class="game-button">Start Game</button>
+        </div>
+    </div>
+
+    <script type="module">
+        // --- Game Setup ---
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const $scoreDisplay = document.getElementById('score-display');
+        const $levelDisplay = document.getElementById('level-display');
+        const $healthDisplay = document.getElementById('health-display');
+        const $modal = document.getElementById('message-modal');
+        const $modalTitle = document.getElementById('modal-title');
+        const $modalMessage = document.getElementById('modal-message');
+        const $modalButton = document.getElementById('modal-button');
+
+        let gameLoopId;
+        let isRunning = false;
+        let lastSpawnTime = 0;
+        let keys = {};
+        let gameScore = 0;
+        let currentLevel = 1;
+
+        // --- Configuration ---
+        const levelConfigs = [
+            // Level 0 (unused, just for indexing clarity)
+            {}, 
+            // Level 1
+            { level: 1, maxEnemies: 5, enemySpeed: 1.5, enemyHealth: 1, spawnRate: 150, requiredScore: 5 },
+            // Level 2 (Updated for reduced speed and slower spawning)
+            { level: 2, maxEnemies: 8, enemySpeed: 1.8, enemyHealth: 2, spawnRate: 140, requiredScore: 13 },
+            // Level 3
+            { level: 3, maxEnemies: 12, enemySpeed: 3.5, enemyHealth: 3, spawnRate: 90, requiredScore: 25 },
+            // Level 4
+            { level: 4, maxEnemies: 15, enemySpeed: 4.0, enemyHealth: 4, spawnRate: 70, requiredScore: 40 },
+            // Level 5 (Final Level)
+            { level: 5, maxEnemies: 20, enemySpeed: 5.0, enemyHealth: 5, spawnRate: 50, requiredScore: 60 }
+        ];
+
+        let config = levelConfigs[currentLevel];
+
+        // --- Game Entities ---
+
+        /** Player object */
+        const player = {
+            x: 0,
+            y: 0,
+            radius: 15,
+            color: 'var(--color-primary)',
+            speed: 5,
+            health: 100,
+            maxHealth: 100,
+            lastShotTime: 0,
+            fireRate: 200 // milliseconds between shots
+        };
+
+        /** Arrays for active entities */
+        let bullets = [];
+        let enemies = [];
+        let particles = [];
+
+        /** Bullet class */
+        class Bullet {
+            constructor(x, y, vx, vy) {
+                this.x = x;
+                this.y = y;
+                this.radius = 4;
+                this.color = 'var(--color-green)';
+                this.speed = 10;
+                this.vx = vx;
+                this.vy = vy;
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            update() {
+                this.x += this.vx * this.speed;
+                this.y += this.vy * this.speed;
+            }
+        }
+
+        /** Enemy (AI Target) class */
+        class Enemy {
+            constructor() {
+                // Random position on the edge of the screen
+                const edge = Math.floor(Math.random() * 4); // 0: Top, 1: Right, 2: Bottom, 3: Left
+                if (edge === 0) {
+                    this.x = Math.random() * canvas.width;
+                    this.y = -20;
+                } else if (edge === 1) {
+                    this.x = canvas.width + 20;
+                    this.y = Math.random() * canvas.height;
+                } else if (edge === 2) {
+                    this.x = Math.random() * canvas.width;
+                    this.y = canvas.height + 20;
+                } else { // edge === 3
+                    this.x = -20;
+                    this.y = Math.random() * canvas.height;
+                }
+
+                this.radius = 12 + config.enemyHealth * 2;
+                this.color = 'var(--color-secondary)';
+                this.health = config.enemyHealth;
+                this.maxHealth = config.enemyHealth;
+                this.speed = config.enemySpeed;
+            }
+
+            draw() {
+                // Draw AI core
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Draw Health Bar
+                const barWidth = this.radius * 2;
+                const barHeight = 4;
+                const healthRatio = this.health / this.maxHealth;
+                
+                // Background (empty)
+                ctx.fillStyle = '#444';
+                ctx.fillRect(this.x - this.radius, this.y + this.radius + 5, barWidth, barHeight);
+                
+                // Foreground (actual health)
+                ctx.fillStyle = 'var(--color-green)';
+                ctx.fillRect(this.x - this.radius, this.y + this.radius + 5, barWidth * healthRatio, barHeight);
+            }
+
+            /** AI movement: move towards the player */
+            update() {
+                const dx = player.x - this.x;
+                const dy = player.y - this.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                // Calculate velocity components
+                this.x += (dx / distance) * this.speed;
+                this.y += (dy / distance) * this.speed;
+            }
+        }
+
+        /** Particle class for explosions */
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.radius = Math.random() * 3 + 1;
+                this.color = color;
+                this.velocity = {
+                    x: (Math.random() - 0.5) * 5,
+                    y: (Math.random() - 0.5) * 5
+                };
+                this.alpha = 1;
+                this.friction = 0.99;
+                this.gravity = 0;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            update() {
+                this.velocity.x *= this.friction;
+                this.velocity.y *= this.friction;
+                this.velocity.y += this.gravity;
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.alpha -= 0.02;
+            }
+        }
+
+
+        // --- Core Game Functions ---
+
+        /** Initialize canvas size and player position */
+        function init() {
+            // Set canvas size dynamically
+            canvas.width = canvas.clientWidth;
+            // Removed fixed 500px limit; canvas height scales responsively based on a 4:3 aspect ratio (0.75)
+            // The max-height of the container in CSS handles vertical screen size constraints now.
+            canvas.height = canvas.clientWidth * 0.75; 
+            
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            player.health = player.maxHealth;
+            gameScore = 0;
+            currentLevel = 1;
+            config = levelConfigs[currentLevel];
+            enemies = [];
+            bullets = [];
+            particles = [];
+            lastSpawnTime = 0;
+            updateUI();
+        }
+
+        /** Handle player movement based on keyboard input */
+        function handleMovement() {
+            let dx = 0;
+            let dy = 0;
+
+            if (keys['w'] || keys['ArrowUp']) dy -= player.speed;
+            if (keys['s'] || keys['ArrowDown']) dy += player.speed;
+            if (keys['a'] || keys['ArrowLeft']) dx -= player.speed;
+            if (keys['d'] || keys['ArrowRight']) dx += player.speed;
+
+            // Normalize diagonal movement speed
+            if (dx !== 0 && dy !== 0) {
+                const diagSpeed = player.speed / Math.sqrt(2);
+                dx = dx > 0 ? diagSpeed : (dx < 0 ? -diagSpeed : 0);
+                dy = dy > 0 ? diagSpeed : (dy < 0 ? -diagSpeed : 0);
+            }
+
+            // Apply movement and boundary checks
+            player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x + dx));
+            player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y + dy));
+        }
+
+        /** Player shooting logic */
+        function shoot(targetX, targetY) {
+            const now = Date.now();
+            if (now - player.lastShotTime > player.fireRate) {
+                player.lastShotTime = now;
+
+                // Calculate direction vector
+                const dx = targetX - player.x;
+                const dy = targetY - player.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const vx = dx / distance;
+                const vy = dy / distance;
+
+                // Create and add the new bullet
+                bullets.push(new Bullet(player.x, player.y, vx, vy));
+            }
+        }
+
+        /** Spawn new AI targets based on current level configuration */
+        function spawnEnemies() {
+            const now = Date.now();
+            if (enemies.length < config.maxEnemies && now - lastSpawnTime > config.spawnRate) {
+                enemies.push(new Enemy());
+                lastSpawnTime = now;
+            }
+        }
+
+        /** Check collision between two circles */
+        function checkCollision(obj1, obj2) {
+            const dx = obj1.x - obj2.x;
+            const dy = obj1.y - obj2.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            return distance < obj1.radius + obj2.radius;
+        }
+
+        /** Handle all game logic updates, collisions, and cleanup */
+        function updateGame() {
+            handleMovement();
+            spawnEnemies();
+
+            // 1. Update and clean up bullets
+            bullets.forEach((bullet, bIndex) => {
+                bullet.update();
+                // Remove bullets that are off-screen
+                if (bullet.x < 0 || bullet.x > canvas.width || bullet.y < 0 || bullet.y > canvas.height) {
+                    bullets.splice(bIndex, 1);
+                }
+            });
+
+            // 2. Update and clean up enemies
+            enemies.forEach((enemy, eIndex) => {
+                enemy.update();
+
+                // Enemy hits player
+                if (checkCollision(player, enemy)) {
+                    player.health -= 10;
+                    // Create collision particles
+                    for (let i = 0; i < 15; i++) {
+                        particles.push(new Particle(enemy.x, enemy.y, 'rgba(255, 0, 119, 0.8)'));
+                    }
+                    enemies.splice(eIndex, 1);
+                    return;
+                }
+
+                // Bullet hits enemy
+                bullets.forEach((bullet, bIndex) => {
+                    if (checkCollision(bullet, enemy)) {
+                        enemies[eIndex].health -= 1;
+                        
+                        // Create hit particle
+                        particles.push(new Particle(bullet.x, bullet.y, 'rgba(57, 255, 20, 0.8)'));
+
+                        // Remove bullet
+                        bullets.splice(bIndex, 1);
+
+                        // Check if enemy is destroyed
+                        if (enemies[eIndex].health <= 0) {
+                            gameScore += config.enemyHealth; // Score based on enemy health/difficulty
+                            
+                            // Create explosion particles
+                            for (let i = 0; i < 30; i++) {
+                                particles.push(new Particle(enemy.x, enemy.y, 'var(--color-secondary)'));
+                            }
+
+                            // Remove enemy
+                            enemies.splice(eIndex, 1);
+                        }
+                    }
+                });
+            });
+            
+            // 3. Update particles
+            particles.forEach((particle, pIndex) => {
+                particle.update();
+                if (particle.alpha <= 0 || particle.radius < 0.5) {
+                    particles.splice(pIndex, 1);
+                }
+            });
+
+            // 4. Update UI and check game state
+            updateUI();
+            checkGameState();
+        }
+
+        /** Draws all entities and the player */
+        function drawGame() {
+            // Clear canvas
+            ctx.fillStyle = 'var(--color-canvas)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw entities
+            particles.forEach(p => p.draw());
+            bullets.forEach(b => b.draw());
+            enemies.forEach(e => e.draw());
+
+            // --- Draw Player (Updated for High Visibility) ---
+            
+            // 1. Draw Outer Glow/Shadow (Neon Primary Color)
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = player.color;
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 2. Draw Inner Core (Bright White)
+            ctx.shadowBlur = 0; 
+            ctx.fillStyle = '#fff'; // White for max visibility
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius * 0.7, 0, Math.PI * 2);
+            ctx.fill();
+            // --- End Player Draw ---
+        }
+        
+        /** Main game loop */
+        function gameLoop() {
+            if (!isRunning) return;
+
+            updateGame();
+            drawGame();
+
+            gameLoopId = requestAnimationFrame(gameLoop);
+        }
+
+        /** Updates the UI elements */
+        function updateUI() {
+            $scoreDisplay.textContent = gameScore;
+            $levelDisplay.textContent = currentLevel;
+            $healthDisplay.textContent = player.health;
+            
+            if (player.health > 70) {
+                $healthDisplay.className = 'text-green-500';
+            } else if (player.health > 30) {
+                $healthDisplay.className = 'text-yellow-500';
+            } else {
+                $healthDisplay.className = 'text-red-500';
+            }
+        }
+
+        /** Check win/lose conditions and level progression */
+        function checkGameState() {
+            if (player.health <= 0) {
+                endGame(false); // Player lost
+            } else if (currentLevel < levelConfigs.length - 1 && gameScore >= config.requiredScore) {
+                // Advance to next level
+                currentLevel++;
+                config = levelConfigs[currentLevel];
+                showMessage(`LEVEL ${currentLevel} ONLINE`, `New AI targets detected! Score ${config.requiredScore} to reach the next level.`, true);
+            } else if (currentLevel === levelConfigs.length - 1 && gameScore >= config.requiredScore) {
+                 endGame(true); // Player won
+            }
+        }
+
+        /** Stops the game and shows the final result message */
+        function endGame(won) {
+            isRunning = false;
+            cancelAnimationFrame(gameLoopId);
+            
+            const title = won ? 'VICTORY!' : 'DEFEAT!';
+            const message = won 
+                ? `You successfully intercepted all major threats! Final Score: ${gameScore}`
+                : `Your core systems failed. Final Score: ${gameScore}. Try again to beat Level ${currentLevel}.`;
+
+            showMessage(title, message, false);
+        }
+
+        /** Shows the custom modal message */
+        function showMessage(title, message, isLevelUp) {
+            $modalTitle.textContent = title;
+            $modalMessage.textContent = message;
+            $modalButton.textContent = isLevelUp ? `CONTINUE TO LEVEL ${currentLevel}` : 'RESTART';
+            $modal.style.display = 'flex';
+        }
+
+        /** Handles the button click in the modal */
+        function handleModalButton() {
+            $modal.style.display = 'none';
+
+            if (isRunning) {
+                // If the game was running (i.e., this was a level-up pause)
+                // We reset the entities but keep player status and score
+                enemies = [];
+                bullets = [];
+                particles = [];
+                lastSpawnTime = 0;
+            } else {
+                // If the game was not running (i.e., this was a fresh start or a restart after defeat)
+                init();
+            }
+
+            isRunning = true;
+            gameLoopId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Event Listeners ---
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            if (e.key === ' ' && isRunning) {
+                // Prevent space from scrolling the page
+                e.preventDefault(); 
+                // Shoot towards the center of the screen if not using mouse
+                shoot(player.x, player.y - canvas.height);
+            }
+            keys[e.key.toLowerCase()] = true;
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+        });
+
+        // Mouse/Touch for shooting
+        canvas.addEventListener('mousedown', (e) => {
+            if (isRunning) {
+                // Get mouse position relative to canvas
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                shoot(mouseX, mouseY);
+            }
+        });
+        
+        // Touch input for shooting (tap)
+        canvas.addEventListener('touchstart', (e) => {
+            if (isRunning) {
+                // Prevent default scrolling/zooming
+                e.preventDefault(); 
+                
+                // Get the touch location (use the first touch point)
+                const touch = e.touches[0];
+                const rect = canvas.getBoundingClientRect();
+                const touchX = touch.clientX - rect.left;
+                const touchY = touch.clientY - rect.top;
+                shoot(touchX, touchY);
+            }
+        }, { passive: false }); // passive: false is important for preventDefault
+
+        // Ensure canvas resizes correctly
+        window.addEventListener('resize', () => {
+            if (isRunning) {
+                const oldWidth = canvas.width;
+                const oldHeight = canvas.height;
+                init();
+                // Adjust player position proportionally on resize
+                player.x = (player.x / oldWidth) * canvas.width;
+                player.y = (player.y / oldHeight) * canvas.height;
+            }
+        });
+        
+        $modalButton.addEventListener('click', handleModalButton);
+
+        // --- Start Game ---
+        init();
+        // Show initial message
+        showMessage('AI Intercept', 'Use WASD or Arrow Keys to move. Click or press SPACE to shoot. Eliminate the AI targets to proceed!', false);
+    </script>
+</body>
+</html>
